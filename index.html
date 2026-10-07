@@ -82,9 +82,9 @@
     <label>並べ替え:
       <select id="sortCol">
         <option value="-1">出席簿の順</option>
-        <option value="0">学生ID</option>
-        <option value="1">表示用氏名</option>
-        <option value="2">出欠</option>
+        <option value="0">user_id</option>
+        <option value="1">username</option>
+        <option value="2">status</option>
         <option value="3">記録数</option>
         <option value="4">重複</option>
         <option value="5">記録元</option>
@@ -261,7 +261,7 @@ function rebuild() {
     const { total, from } = summarize(hits.get(id));
     rows.push([id, '', '名簿外', String(total), total > 1 ? '重複' : '', from]);
   }
-  result = { header: ['学生ID', '表示用氏名', '出欠', '記録数', '重複', '記録元'], rows };
+  result = { header: ['user_id', 'username', 'status', '記録数', '重複', '記録元'], rows };
   $('summary').textContent =
     `${roster.students.length}名中 出席 ${present}名 / 欠席 ${roster.students.length - present}名 / 重複 ${dup}名` +
     ` / 名簿にないID ${outside.length}件`;
