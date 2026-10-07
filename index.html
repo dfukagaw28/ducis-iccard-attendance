@@ -42,6 +42,9 @@
   td.ng { color: var(--ng); }
   .err { color: var(--ng); }
   tr.dup td { background: var(--dup); }
+  td.out { font-weight: bold; }
+  tr.outside:not(.dup) td { background: var(--head); }
+  tr.outside td:first-child { border-left: 4px solid var(--ng); }
 </style>
 </head>
 <body>
@@ -71,7 +74,7 @@
       </select>
     </label>
   </div>
-  <p class="note">同じ授業回のデータとして全CSVをまとめて判定します。同じ学生の記録が複数ある場合は「重複」と表示します。<br>各CSVで学生IDが入っている列は自動で選びます（出席簿のIDと一致する件数が最も多い列）。違う場合は選び直してください。</p>
+  <p class="note">同じ授業回のデータとして全CSVをまとめて判定します。同じ学生の記録が複数ある場合は「重複」と表示します。出席簿にないIDは結果の末尾に「名簿外」として出します。<br>各CSVで学生IDが入っている列は自動で選びます（出席簿のIDと一致する件数が最も多い列）。違う場合は選び直してください。</p>
   <ul id="csvList"></ul>
 
   <h2>3. 結果</h2>
@@ -169,6 +172,9 @@ function decode(buf) {
   catch { return new TextDecoder('shift_jis').decode(buf); }
 }
 
+// CSV先頭行の値が見出し（「学生ID」など）らしければ、名簿外IDとして扱わない
+const looksLikeHeader = (v) => /[^\x00-\x7F]/.test(v) || !/[0-9]/.test(v);
+
 const colCount = (rows) => rows.reduce((m, r) => Math.max(m, r.length), 0);
 
 // 出席簿の学生IDと一致する値が最も多い列を学生ID列とみなす
@@ -213,26 +219,37 @@ function rebuild() {
   // 学生IDごとに、どのCSVに何件記録があるかを数える: id -> Map(ファイル名 -> 件数)
   const hits = new Map();
   for (const c of ok) {
-    for (const r of c.rows) {
+    c.rows.forEach((r, k) => {
       const id = norm(r[c.col]);
-      if (id === '') continue;
+      if (id === '' || (k === 0 && looksLikeHeader(id))) return;
       if (!hits.has(id)) hits.set(id, new Map());
       const m = hits.get(id);
       m.set(c.name, (m.get(c.name) || 0) + 1);
-    }
+    });
   }
+  const summarize = (m) => {
+    const total = m ? [...m.values()].reduce((a, b) => a + b, 0) : 0;
+    const from = m ? [...m].map(([f, n]) => n > 1 ? `${f}×${n}` : f).join(' / ') : '';
+    return { total, from };
+  };
   let present = 0, dup = 0;
   const rows = roster.students.map(s => {
-    const m = hits.get(s.id);
-    const total = m ? [...m.values()].reduce((a, b) => a + b, 0) : 0;
+    const { total, from } = summarize(hits.get(s.id));
     if (total > 0) present++;
     if (total > 1) dup++;
-    const from = m ? [...m].map(([f, n]) => n > 1 ? `${f}×${n}` : f).join(' / ') : '';
     return [s.id, s.name, total ? '出席' : '欠席', String(total), total > 1 ? '重複' : '', from];
   });
+  // 出席データにあるが出席簿にないIDは、末尾に「名簿外」として並べる
+  const rosterIds = new Set(roster.students.map(s => s.id));
+  const outside = [...hits.keys()].filter(id => !rosterIds.has(id)).sort();
+  for (const id of outside) {
+    const { total, from } = summarize(hits.get(id));
+    rows.push([id, '', '名簿外', String(total), total > 1 ? '重複' : '', from]);
+  }
   result = { header: ['学生ID', '表示用氏名', '出欠', '記録数', '重複', '記録元'], rows };
   $('summary').textContent =
-    `${roster.students.length}名中 出席 ${present}名 / 欠席 ${roster.students.length - present}名 / 重複 ${dup}名`;
+    `${roster.students.length}名中 出席 ${present}名 / 欠席 ${roster.students.length - present}名 / 重複 ${dup}名` +
+    ` / 名簿にないID ${outside.length}件`;
   renderTable();
 }
 
@@ -288,8 +305,10 @@ function renderTable() {
       td.textContent = v;
       if (v === '出席') td.className = 'ok';
       else if (v === '欠席') td.className = 'ng';
+      else if (v === '名簿外') td.className = 'out';
     }
     if (r[4] === '重複') tr.className = 'dup';
+    if (r[2] === '名簿外') tr.classList.add('outside');
   }
 }
 
