@@ -79,6 +79,21 @@
 
   <h2>3. 結果</h2>
   <div class="row">
+    <label>並べ替え:
+      <select id="sortCol">
+        <option value="-1">出席簿の順</option>
+        <option value="0">学生ID</option>
+        <option value="1">表示用氏名</option>
+        <option value="2">出欠</option>
+        <option value="3">記録数</option>
+        <option value="4">重複</option>
+        <option value="5">記録元</option>
+      </select>
+      <select id="sortDir">
+        <option value="asc">昇順</option>
+        <option value="desc">降順</option>
+      </select>
+    </label>
     <button id="save" disabled>CSVで保存</button>
     <button id="clear" class="sub">すべてクリア</button>
     <span id="summary" class="note"></span>
@@ -290,15 +305,42 @@ function renderCSVList() {
   }));
 }
 
+// 指定列で並べ替えた行（プレビューと保存の両方で使う）。同じ値の行は出席簿の順を保つ
+const collator = new Intl.Collator('ja', { numeric: true });
+function sortedRows() {
+  const col = Number($('sortCol').value);
+  if (col < 0) return result.rows;
+  const dir = $('sortDir').value === 'desc' ? -1 : 1;
+  return [...result.rows].sort((a, b) => {
+    // 空欄は昇順・降順どちらでも末尾に置く
+    if ((a[col] === '') !== (b[col] === '')) return a[col] === '' ? 1 : -1;
+    return dir * collator.compare(a[col], b[col]);
+  });
+}
+
 function renderTable() {
   $('save').disabled = result.rows.length === 0;
   const table = $('preview');
   table.replaceChildren();
   if (!result.header.length) return;
   const thead = table.createTHead().insertRow();
-  for (const h of result.header) { const th = document.createElement('th'); th.textContent = h; thead.appendChild(th); }
+  const sortCol = Number($('sortCol').value), desc = $('sortDir').value === 'desc';
+  result.header.forEach((h, j) => {
+    const th = document.createElement('th');
+    th.textContent = h + (j === sortCol ? (desc ? ' ▼' : ' ▲') : '');
+    th.title = 'クリックで並べ替え';
+    th.style.cursor = 'pointer';
+    // 見出しクリック: 別の列なら昇順、同じ列なら昇順→降順→出席簿の順
+    th.addEventListener('click', () => {
+      if (j !== sortCol) { $('sortCol').value = j; $('sortDir').value = 'asc'; }
+      else if (!desc) $('sortDir').value = 'desc';
+      else { $('sortCol').value = -1; $('sortDir').value = 'asc'; }
+      renderTable();
+    });
+    thead.appendChild(th);
+  });
   const tbody = table.createTBody();
-  for (const r of result.rows) {
+  for (const r of sortedRows()) {
     const tr = tbody.insertRow();
     for (const v of r) {
       const td = tr.insertCell();
@@ -314,7 +356,7 @@ function renderTable() {
 
 function save() {
   // Excelで文字化けしないようBOM付きUTF-8で出力
-  const blob = new Blob(['﻿' + toCSV(result.header, result.rows)], { type: 'text/csv' });
+  const blob = new Blob(['﻿' + toCSV(result.header, sortedRows())], { type: 'text/csv' });
   const a = document.createElement('a');
   const d = new Date();
   const p = (n) => String(n).padStart(2, '0');
@@ -338,6 +380,8 @@ $('csvPicker').addEventListener('change', (e) => { addCSVs(e.target.files); e.ta
 window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', (e) => e.preventDefault());
 $('save').addEventListener('click', save);
+$('sortCol').addEventListener('change', renderTable);
+$('sortDir').addEventListener('change', renderTable);
 $('clear').addEventListener('click', () => {
   roster = null; csvs = [];
   $('rosterInfo').textContent = '';
