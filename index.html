@@ -11,10 +11,10 @@
 <title>出席取りまとめ</title>
 <style>
   :root { --bg:#fff; --fg:#222; --muted:#666; --line:#ddd; --accent:#2563eb; --head:#f3f4f6;
-          --ok:#15803d; --ng:#dc2626; }
+          --ok:#15803d; --ng:#dc2626; --dup:#fef3c7; }
   @media (prefers-color-scheme: dark) {
     :root { --bg:#111; --fg:#eee; --muted:#aaa; --line:#333; --accent:#60a5fa; --head:#1f2937;
-            --ok:#4ade80; --ng:#f87171; }
+            --ok:#4ade80; --ng:#f87171; --dup:#422006; }
   }
   * { box-sizing: border-box; }
   body { margin:0; padding:16px; background:var(--bg); color:var(--fg);
@@ -41,6 +41,7 @@
   td.ok { color: var(--ok); }
   td.ng { color: var(--ng); }
   .err { color: var(--ng); }
+  tr.dup td { background: var(--dup); }
 </style>
 </head>
 <body>
@@ -69,10 +70,8 @@
         <option value="shift_jis">Shift_JIS</option>
       </select>
     </label>
-    <label><input type="radio" name="mode" value="each" checked> CSVごとに列を作る</label>
-    <label><input type="radio" name="mode" value="all"> 全CSVをまとめて1列</label>
   </div>
-  <p class="note">各CSVで学生IDが入っている列は自動で選びます（出席簿のIDと一致する件数が最も多い列）。違う場合は選び直してください。</p>
+  <p class="note">同じ授業回のデータとして全CSVをまとめて判定します。同じ学生の記録が複数ある場合は「重複」と表示します。<br>各CSVで学生IDが入っている列は自動で選びます（出席簿のIDと一致する件数が最も多い列）。違う場合は選び直してください。</p>
   <ul id="csvList"></ul>
 
   <h2>3. 結果</h2>
@@ -211,25 +210,29 @@ function rebuild() {
     $('summary').textContent = !roster ? '出席簿を読み込んでください' : '出席データを読み込んでください';
     return renderTable();
   }
-  const idSets = ok.map(c => new Set(c.rows.map(r => norm(r[c.col])).filter(v => v !== '')));
-  const mark = (b) => b ? '出席' : '欠席';
-  let header, rows;
-  if (document.querySelector('input[name=mode]:checked').value === 'all') {
-    header = ['学生ID', '表示用氏名', '出欠'];
-    rows = roster.students.map(s => [s.id, s.name, mark(idSets.some(set => set.has(s.id)))]);
-  } else {
-    header = ['学生ID', '表示用氏名', ...ok.map(c => c.name.replace(/\.csv$/i, ''))];
-    if (ok.length > 1) header.push('出席回数');
-    rows = roster.students.map(s => {
-      const flags = idSets.map(set => set.has(s.id));
-      const r = [s.id, s.name, ...flags.map(mark)];
-      if (ok.length > 1) r.push(String(flags.filter(Boolean).length));
-      return r;
-    });
+  // 学生IDごとに、どのCSVに何件記録があるかを数える: id -> Map(ファイル名 -> 件数)
+  const hits = new Map();
+  for (const c of ok) {
+    for (const r of c.rows) {
+      const id = norm(r[c.col]);
+      if (id === '') continue;
+      if (!hits.has(id)) hits.set(id, new Map());
+      const m = hits.get(id);
+      m.set(c.name, (m.get(c.name) || 0) + 1);
+    }
   }
-  result = { header, rows };
-  const present = roster.students.filter(s => idSets.some(set => set.has(s.id))).length;
-  $('summary').textContent = `${roster.students.length}名中、いずれかのCSVに記録あり ${present}名`;
+  let present = 0, dup = 0;
+  const rows = roster.students.map(s => {
+    const m = hits.get(s.id);
+    const total = m ? [...m.values()].reduce((a, b) => a + b, 0) : 0;
+    if (total > 0) present++;
+    if (total > 1) dup++;
+    const from = m ? [...m].map(([f, n]) => n > 1 ? `${f}×${n}` : f).join(' / ') : '';
+    return [s.id, s.name, total ? '出席' : '欠席', String(total), total > 1 ? '重複' : '', from];
+  });
+  result = { header: ['学生ID', '表示用氏名', '出欠', '記録数', '重複', '記録元'], rows };
+  $('summary').textContent =
+    `${roster.students.length}名中 出席 ${present}名 / 欠席 ${roster.students.length - present}名 / 重複 ${dup}名`;
   renderTable();
 }
 
@@ -286,6 +289,7 @@ function renderTable() {
       if (v === '出席') td.className = 'ok';
       else if (v === '欠席') td.className = 'ng';
     }
+    if (r[4] === '重複') tr.className = 'dup';
   }
 }
 
@@ -314,7 +318,6 @@ $('csvPicker').addEventListener('change', (e) => { addCSVs(e.target.files); e.ta
 // ドロップ枠の外に落とした場合にブラウザがファイルを開いてしまうのを防ぐ
 window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', (e) => e.preventDefault());
-document.querySelectorAll('input[name=mode]').forEach(r => r.addEventListener('change', rebuild));
 $('save').addEventListener('click', save);
 $('clear').addEventListener('click', () => {
   roster = null; csvs = [];
